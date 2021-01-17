@@ -1,10 +1,9 @@
-import { on, stdin } from "process";
+import { stdin } from "process";
 import { clone } from "ramda";
 import GhostObject from "./Utils/Interfaces/ghost.object.interface";
-import Node from "./Utils/Interfaces/node.interface";
-
+import Vector from "./Utils/Vector/Vector";
 export default class PacMan {
-    
+
     #renderSpeed: number = 50;
     #gameCounter: number = 0;
     #score: number = 0;
@@ -17,16 +16,27 @@ export default class PacMan {
     #currentLevel: number = 1;
     #interval: NodeJS.Timeout | false = false;
 
+    // Game information. Emojis to use for the game
     #pacman: string = "🟡";
     #ghost: string = "👻";
     #cherry: string = "🍒";
     #food: string = "🔸";
     #powerPellet: string = "🟠";
-    #wall: string = "🔲";
+    #wall: string = "🔳";
     #empty: string = "⚫";
     #door: string = "🟦";
-    #border: string = "🔳";
+    #border: string = "🔲";
 
+    // Scatter mode moves each ghost into its respective corner
+    // Chase move uses their normal targeting
+    // Scared mode makes them choose random tiles to move to, still
+    // not allowing them to move backwards.
+    #mode: "scatter" | "chase" | "scared" = "chase";
+
+    // Not the best stratagy, but the first element of this array
+    // is the ghosts current status and the second element is where
+    // the ghosts were previously. I do this so I can replace the last tile
+    // they were on with the correct material.
     #ghostPositions: GhostObject[] = [{
         inky: {
             y: 13,
@@ -43,7 +53,7 @@ export default class PacMan {
             pieceOnType: "empty",
         },
         pinky: {
-            y: 13, 
+            y: 13,
             x: 10,
             eatable: false,
             name: "pinky",
@@ -58,14 +68,16 @@ export default class PacMan {
         }
     }];
 
+    // Same idea as above, just with pacman
     #pacmanPos: { x: number, y: number }[] = [
-        { x: 9, y: 21, }, 
+        { x: 9, y: 21, },
     ];
 
+    // Dirrection pacman is facing to determine which way he should move
     #facing: "r" | "l" | "u" | "d" = "u";
 
-    constructor() { 
-        this.start() 
+    constructor() {
+        this.start()
     };
 
     private start(): void {
@@ -94,6 +106,8 @@ export default class PacMan {
         stdin.resume();
     }
 
+    // All this does is clear the current interval and reset it
+    // so you can "pause" the game. As no rendering is taking place
     private pause_play(): void {
         if (this.#interval !== false) {
             clearInterval(this.#interval);
@@ -105,32 +119,31 @@ export default class PacMan {
         }
     }
 
-    private sleep(ms: number) {
-        return new Promise(r => setTimeout(r, ms));
-    }
-
     private render(): void {
-        const blinkyRender = 9;
-        const clydeRender = 35;
-        const inkyRender = 70;
-        const pinkyRender = 400
+        const blinkyRender = 2; // food eaten
+        const pinkyRender = 5; // food eaten
+
+        const clydeRender = 60; // food eaten
+        const inkyRender = 29; // food eaten
 
         console.clear();
 
         if (this.#gameCounter % 8 === 0) this.move();
 
-        if (this.#gameCounter > blinkyRender && this.#gameCounter % 9 === 0) this.ghostMove("blinky");
-        // if (this.#gameCounter > clydeRender) this.ghostMove("clyde");
-        // if (this.#gameCounter > inkyRender) this.ghostMove("inky");
-        if (this.#gameCounter > pinkyRender && this.#gameCounter % 8 === 0) this.ghostMove("pinky");
+        if (this.#eatenDots > blinkyRender && this.#gameCounter % 10 === 0) this.ghostMove("blinky");
+        if (this.#eatenDots > pinkyRender && this.#gameCounter % 10 === 0) this.ghostMove("pinky");
+        if (this.#eatenDots > inkyRender && this.#gameCounter % 10 === 0) this.ghostMove("inky");
+        if (this.#eatenDots > clydeRender && this.#gameCounter % 10 === 0) this.ghostMove("clyde");
 
-        if (this.#gameCounter === clydeRender) {
-            this.#ghostPositions[0]["clyde"].x = 9;
-            this.#ghostPositions[0]["clyde"].y = 11;
-        } else if (this.#gameCounter === inkyRender) {
+        if (this.#eatenDots === inkyRender) {
             this.#ghostPositions[0]["inky"].x = 9;
             this.#ghostPositions[0]["inky"].y = 11;
-        } else if (this.#gameCounter === pinkyRender) {
+        }
+        if (this.#eatenDots === clydeRender) {
+            this.#ghostPositions[0]["clyde"].x = 9;
+            this.#ghostPositions[0]["clyde"].y = 11;
+        }
+        if (this.#gameCounter === pinkyRender) {
             this.#ghostPositions[0]["pinky"].x = 9;
             this.#ghostPositions[0]["pinky"].y = 11;
         }
@@ -145,8 +158,8 @@ export default class PacMan {
             if (this.#cherryPlaced === true) this.#cherryPlaced = false;
         } else if (this.#level[this.#pacmanPos[0].y][this.#pacmanPos[0].x] === this.#powerPellet) {
             this.#score += 50;
-            this.scareGhosts();
             this.#eatenDots++;
+            this.scareGhosts();
         } else if (this.#level[this.#pacmanPos[0].y][this.#pacmanPos[0].x] === this.#cherry) {
             this.#score += 100;
         }
@@ -161,29 +174,29 @@ export default class PacMan {
         const newGhostPositions = this.#ghostPositions[0];
         const oldGhostPositions = this.#ghostPositions[1];
 
-        // Render Clyde
-        if (oldGhostPositions) {
+        // Render Blinky
+        if (this.#eatenDots > blinkyRender && oldGhostPositions) {
             const CpieceType = oldGhostPositions.blinky.pieceOnType;
             this.#level[newGhostPositions.blinky.y][newGhostPositions.blinky.x] = this.#ghost;
             this.#level[oldGhostPositions.blinky.y][oldGhostPositions.blinky.x] = CpieceType === "empty" ? this.#empty : CpieceType === "food" ? this.#food : CpieceType === "cherry" ? this.#cherry : this.#powerPellet;
         }
 
-        // Render Blinky
-        // if (this.#gameCounter > clydeRender) {
-        //     const BpieceType = oldGhostPositions.clyde.pieceOnType;
-        //     this.#level[newGhostPositions.clyde.y][newGhostPositions.clyde.x] = this.#ghost;
-        //     this.#level[oldGhostPositions.clyde.y][oldGhostPositions.blinky.x] = BpieceType === "empty" ? this.#empty : BpieceType === "food" ? this.#food : BpieceType === "cherry" ? this.#cherry : this.#powerPellet;
-        // }
-
         // Render Inky
-        // if (this.#gameCounter > inkyRender) {
-        //     const IpieceType = oldGhostPositions.inky.pieceOnType;
-        //     this.#level[newGhostPositions.inky.y][newGhostPositions.inky.x] = this.#ghost;
-        //     this.#level[oldGhostPositions.inky.y][oldGhostPositions.inky.x] = IpieceType === "empty" ? this.#empty : IpieceType === "food" ? this.#food : IpieceType === "cherry" ? this.#cherry : this.#powerPellet;
-        // }
+        if (this.#eatenDots > inkyRender) {
+            const BpieceType = oldGhostPositions.blinky.pieceOnType;
+            this.#level[newGhostPositions.inky.y][newGhostPositions.inky.x] = this.#ghost;
+            this.#level[oldGhostPositions.inky.y][oldGhostPositions.inky.x] = BpieceType === "empty" ? this.#empty : BpieceType === "food" ? this.#food : BpieceType === "cherry" ? this.#cherry : this.#powerPellet;
+        }
+
+        // Render Clyde
+        if (this.#eatenDots > clydeRender) {
+            const IpieceType = oldGhostPositions.clyde.pieceOnType;
+            this.#level[newGhostPositions.clyde.y][newGhostPositions.clyde.x] = this.#ghost;
+            this.#level[oldGhostPositions.clyde.y][oldGhostPositions.clyde.x] = IpieceType === "empty" ? this.#empty : IpieceType === "food" ? this.#food : IpieceType === "cherry" ? this.#cherry : this.#powerPellet;
+        }
 
         // Render Pinky
-        if (this.#gameCounter > pinkyRender) {
+        if (this.#eatenDots > pinkyRender) {
             const PpieceType = oldGhostPositions.pinky.pieceOnType;
             this.#level[newGhostPositions.pinky.y][newGhostPositions.pinky.x] = this.#ghost;
             this.#level[oldGhostPositions.pinky.y][oldGhostPositions.pinky.x] = PpieceType === "empty" ? this.#empty : PpieceType === "food" ? this.#food : PpieceType === "cherry" ? this.#cherry : this.#powerPellet;
@@ -199,85 +212,182 @@ export default class PacMan {
         let oldPos = clone(this.#ghostPositions[0]);
 
         if (ghost === "blinky") {
-            const path = this.findPath(
-                [
-                    this.#ghostPositions[0]["blinky"].x, 
-                    this.#ghostPositions[0]["blinky"].y
-                ], 
-                [
-                    this.#pacmanPos[0].x, 
-                    this.#pacmanPos[0].y
-                ]
-            );
-            newPos.blinky.x = path![0].x;
-            newPos.blinky.y = path![0].y;
+
+            // Blinky's target tile is the same tile that PacMan is on each "frame"
+            const bestMove = this.getBestMove(this.#pacmanPos[0], ghost, oldPos);
+
+            // Setting the new ghosts position to the new move that gets said ghost closest to PacMan.
+            newPos[ghost].x = bestMove.x;
+            newPos[ghost].y = bestMove.y;
 
         } else if (ghost === "pinky") {
 
-            const pacmanPosTuple: [number, number] = 
-            this.#level[this.#pacmanPos[0].y + (this.#facing === "u" ? -2 : this.#facing === "d" ? 2 : 0)] &&
-            this.#level[this.#pacmanPos[0].y + (this.#facing === "u" ? -2 : this.#facing === "d" ? 2 : 0)][this.#pacmanPos[0].x + (this.#facing === "l" ? -2 : this.#facing === "r" ? 2 : 0)] &&
-            this.#level[this.#pacmanPos[0].y + (this.#facing === "u" ? -2 : this.#facing === "d" ? 2 : 0)][this.#pacmanPos[0].x + (this.#facing === "l" ? -2 : this.#facing === "r" ? 2 : 0)] !== this.#wall &&
-            this.#level[this.#pacmanPos[0].y + (this.#facing === "u" ? -2 : this.#facing === "d" ? 2 : 0)][this.#pacmanPos[0].x + (this.#facing === "l" ? -2 : this.#facing === "r" ? 2 : 0)] !== this.#door
-            ?
-            [
-                this.#pacmanPos[0].x + (this.#facing === "l" ? -2 : this.#facing === "r" ? 2 : 0), 
-                this.#pacmanPos[0].y + (this.#facing === "u" ? -2 : this.#facing === "d" ? 2 : 0),
-            ]
-            : 
-            [
-                this.#pacmanPos[0].x, 
-                this.#pacmanPos[0].y
-            ];
-
-            const path = this.findPath(                
-                [
-                    this.#ghostPositions[0]["pinky"].x, 
-                    this.#ghostPositions[0]["pinky"].y,
-                ], 
-                pacmanPosTuple,
-            );
-
-            newPos.pinky.x = path![0].x;
-            newPos.pinky.y = path![0].y;
-
-        } else {
-            const move = (): void => {
-                const math = Math.floor(Math.random() * 4) + 1;
-                if (math === 1) {
-                    newPos[ghost].x++;
-                } else if (math === 2) {
-                    newPos[ghost].x--;
-                } else if (math === 3) {
-                    newPos[ghost].y++;
-                } else if (math === 4) {
-                    newPos[ghost].y--;
-                }
-
-                if (newPos[ghost].x > 18) newPos[ghost].x = 0;
-                if (newPos[ghost].x < 0) newPos[ghost].x = 18;
-
-                if (this.#level[newPos[ghost].y][newPos[ghost].x] === this.#wall || this.#level[newPos[ghost].y][newPos[ghost].x] === this.#door) {
-                    newPos = clone(this.#ghostPositions[0]);
-                    return move();
-                }
-
-                if (newPos[ghost].x === oldPos[ghost].x && newPos[ghost].y === oldPos[ghost].y) {
-                    newPos = clone(this.#ghostPositions[0]);
-                    return move();
-                }
-
+            // Calculate Pinky's target tile based on PacMans position and the dirrection he is facing
+            const targetTile = {
+                x: this.#pacmanPos[0].x + (this.#facing === "l" ? -2 : this.#facing === "r" ? 2 : 0),
+                y: this.#pacmanPos[0].y + (this.#facing === "u" ? -2 : this.#facing === "d" ? 2 : 0),
             }
-            move();
+
+            // The below logic will be exactly the same as Blinky, as Pinky just has a different
+            // target tile. Other than that, she behaves exactly the same.
+
+            const bestMove = this.getBestMove(targetTile, ghost, oldPos);
+
+            newPos[ghost].x = bestMove.x;
+            newPos[ghost].y = bestMove.y;
+
+        } else if (ghost === "inky") {
+
+            // Inky's movement calculations are a bit odd, but we can create a hacky version of
+            // 2D vectors and use those to calculate Inky's target tile. Inky's calculations also take into
+            // account where Blinky currently is, and Pinky's tile that she is targeting.
+
+            // Calculate Pinky's target tile based on PacMans position and the dirrection he is facing
+            // This position is used in Inky's tile calculations
+            const pinkTarget = {
+                x: this.#pacmanPos[0].x + (this.#facing === "l" ? -2 : this.#facing === "r" ? 2 : 0),
+                y: this.#pacmanPos[0].y + (this.#facing === "u" ? -2 : this.#facing === "d" ? 2 : 0),
+            }
+            // Store Blinky's current x and y position for later use. Again, this is used in Inky's
+            // calculations
+            const blinkyPos = { x: oldPos["blinky"].x, y: oldPos["blinky"].y };
+
+            // Creating a pseudo vector from blinkys current position to pinkys target tile
+            const vector = new Vector(blinkyPos.x, blinkyPos.y, pinkTarget.x, pinkTarget.y);
+            // Normalizing the vector to start at (0, 0)
+            // This basically just translates the entire thing over by the starting position
+            const normalized = vector.normalized;
+
+            // Doubling the vectors magnitude
+            // Multiplies the endX and endY by 2
+            const doubled = normalized.scalar(2);
+            // Scale the vector back up into the previous starting position
+            // This adds the old vectors start position back to the doubled vector.
+            // This allows the vector to be correctly doubled without distortions.
+            const reScaled = doubled.scale(vector);
+            // Taking the final position that Inky should target
+            const { endX, endY } = reScaled;
+
+            const bestMove = this.getBestMove({ x: endX, y: endY }, ghost, oldPos);
+            newPos[ghost].x = bestMove.x;
+            newPos[ghost].y = bestMove.y;
+
+        } else if (ghost === "clyde") {
+            // Calculate the distance clyde is from PacMan, this is used to determine
+            // which "mode" clyde should be in. If he is closer than 8 tiles, he will
+            // "run away" towards the bottom left of the map. If he is farther than 8
+            // tiles, he will act identically to Blinky.
+            const currentDistToPacMan = Math.sqrt(Math.pow((oldPos[ghost].x - this.#pacmanPos[0].x), 2) + Math.pow((oldPos[ghost].y - this.#pacmanPos[0].y), 2));
+
+            if (currentDistToPacMan <= 8) {
+                // This is where Clyde will start targeting a tile outside of the bottom left of the level map
+
+                // First we can define the actual point that Clyde will want to escape to.
+                // I'm going to put it outside of the map, firstly because then Clyde will never
+                // Actually be able to GET to the point, and secondly, because that's how it's
+                // Actually done in the game.
+                const runAwayPoint = { x: 1, y: 27 };
+
+                const bestMove = this.getBestMove(runAwayPoint, ghost, oldPos);
+                newPos[ghost].x = bestMove.x;
+                newPos[ghost].y = bestMove.y;
+            } else {
+                // This is where Clyde will act identical to Blinky
+                const bestMove = this.getBestMove(this.#pacmanPos[0], ghost, oldPos);
+                newPos[ghost].x = bestMove.x;
+                newPos[ghost].y = bestMove.y;
+            }
         }
 
-        
+
         const boardPart = this.#level[newPos[ghost].y][newPos[ghost].x];
         newPos[ghost].pieceOnType = boardPart === this.#food ? "food" : boardPart === this.#empty ? "empty" : boardPart === this.#cherry ? "cherry" : boardPart === this.#powerPellet ? "powerPellet" : "empty";
 
         this.#ghostPositions[0][ghost] = newPos[ghost];
         if (this.#ghostPositions[1]) this.#ghostPositions[1][ghost] = oldPos[ghost];
         else this.#ghostPositions[1] = oldPos;
+    }
+
+    private getBestMove(target: { x: number, y: number }, ghost: "clyde" | "inky" | "pinky" | "blinky", oldPos: GhostObject) {
+
+        // An array of all the different movement options for the ghost before taking into consideration of where
+        // the walls are and where the ghost was previously.
+        const moveOptions = [
+            { x: oldPos[ghost].x + 1, y: oldPos[ghost].y },
+            { x: oldPos[ghost].x, y: oldPos[ghost].y + 1 },
+            { x: oldPos[ghost].x - 1, y: oldPos[ghost].y },
+            { x: oldPos[ghost].x, y: oldPos[ghost].y - 1 }
+        ];
+
+        // Completely temporary
+        if (this.#mode === "scatter") {
+            switch (ghost) {
+                case "blinky":
+                    target = { x: 18, y: -2 };
+                    break;
+                case "clyde":
+                    target = { x: 1, y: 27 };
+                    break;
+                case "inky":
+                    target = { x: 19, y: 27 };
+                    break;
+                case "pinky":
+                    target = { x: -1, y: -2 };
+                    break;
+            }
+        } else if (this.#mode === "scared") {
+
+
+
+        }
+
+        // Set the x and y values to crazy high numbers because otherwise it wouldn't choose a new spot to go too.
+        // x and y can be anything as long as they are larger than the actual board space.
+        let bestMove: { x: number, y: number } = { x: 1000, y: 1000 };
+        // Stupid distance formula                               x values                              y values
+        let distanceToPacMan: number = Math.sqrt(Math.pow((target.x - bestMove.x), 2) + Math.pow((target.y - bestMove.y), 2));
+
+        for (const moveOption of moveOptions) {
+            // If the move option is eqal to the last spot the ghost was in, skip it
+            if ((this.#ghostPositions[1] !== undefined)
+                && (moveOption.x === this.#ghostPositions[1][ghost].x)
+                && (moveOption.y === this.#ghostPositions[1][ghost].y))
+                continue;
+
+            // If the move option moves the ghost into a wall, skip it
+            if ((this.#level[moveOption.y][moveOption.x] === this.#wall)
+                || (this.#level[moveOption.y][moveOption.x] === this.#door)
+                || (this.#level[moveOption.y][moveOption.x] === this.#border))
+                continue;
+
+            // New distance to pacman
+            const distance = Math.sqrt(Math.pow((target.x - moveOption.x), 2) + Math.pow((target.y - moveOption.y), 2));
+
+            // If the new calculated distance is closer to PacMan than the last calculated distance,
+            // set the distance to the new distance and set the best move to the corresponding move.
+            if (distance < distanceToPacMan) {
+                distanceToPacMan = distance;
+                bestMove = moveOption;
+            }
+        }
+
+        // If the ghost is trying to move through either of the corridors,
+        // teleport it to the other side of the map.
+        if (bestMove.x > 18)
+            bestMove.x = 0;
+        else if (bestMove.x < 0)
+            bestMove.x = 18;
+
+        // If the ghost is trying to move onto another ghost
+        // move said ghost back to where it was. I may remove this
+        // but its just to prevent them from clipping with each other
+        if (this.#level[bestMove.x][bestMove.y] === this.#ghost) {
+            bestMove.x = oldPos[ghost].x;
+            bestMove.y = oldPos[ghost].y;
+        }
+
+        return { x: bestMove.x, y: bestMove.y };
+
     }
 
     private win(): void {
@@ -290,13 +400,15 @@ export default class PacMan {
         this.#ghostPositions[0]["clyde"].eatable = true;
         this.#ghostPositions[0]["inky"].eatable = true;
         this.#ghostPositions[0]["pinky"].eatable = true;
+        this.#mode = "scared";
 
         setTimeout(() => {
             this.#ghostPositions[0]["blinky"].eatable = false;
             this.#ghostPositions[0]["clyde"].eatable = false;
             this.#ghostPositions[0]["inky"].eatable = false;
             this.#ghostPositions[0]["pinky"].eatable = false;
-        }, 7500);
+            this.#mode = "chase";
+        }, 9000);
     }
 
     private move(): void {
@@ -304,7 +416,7 @@ export default class PacMan {
         const newPos = clone(this.#pacmanPos[0]);
         const oldPos = clone(this.#pacmanPos[0]);
 
-        switch(this.#facing) {
+        switch (this.#facing) {
             case "d":
                 newPos.y++;
                 break;
@@ -330,6 +442,8 @@ export default class PacMan {
 
     private createLevel(): string[][] {
 
+        // Shut up, i have no better way of doing this
+        // Later me - I might have an idea but it might suck :D
         const row_zero = [this.#wall, this.#wall, this.#wall, this.#wall, this.#wall, this.#wall, this.#wall, this.#wall, this.#wall, this.#wall].mirrorConcat();
         const row_one = ([this.#wall].concat(...(this.#food.repeat(8))).concat(...[this.#wall]).mirrorConcat());
         const row_two = ([this.#wall, this.#food, this.#wall, this.#wall, this.#food, this.#wall, this.#wall, this.#wall, this.#food, this.#wall]).mirrorConcat();
@@ -349,9 +463,9 @@ export default class PacMan {
         row_nine.splice(0, 1);
 
         const level_one: string[][] = [
-            row_zero, row_one, row_two, row_three, 
-            row_four, row_five, row_six, row_seven, 
-            row_eight, row_nine, row_ten, row_eleven, 
+            row_zero, row_one, row_two, row_three,
+            row_four, row_five, row_six, row_seven,
+            row_eight, row_nine, row_ten, row_eleven,
             row_twelve
         ];
 
@@ -359,8 +473,8 @@ export default class PacMan {
 
         const ghostPos = this.#ghostPositions;
 
-        // return_level[ghostPos[0].clyde.y][ghostPos[0].clyde.x] = this.#ghost; // Clyde
-        // return_level[ghostPos[0].inky.y][ghostPos[0].inky.x] = this.#ghost; // Inky
+        return_level[ghostPos[0].clyde.y][ghostPos[0].clyde.x] = this.#ghost; // Clyde
+        return_level[ghostPos[0].inky.y][ghostPos[0].inky.x] = this.#ghost; // Inky
         return_level[ghostPos[0].blinky.y][ghostPos[0].blinky.x] = this.#ghost; // Blinky
         return_level[ghostPos[0].pinky.y][ghostPos[0].pinky.x] = this.#ghost; // Pinky
 
@@ -378,116 +492,5 @@ export default class PacMan {
             this.#border.repeat(21)
         );
         console.log(`Extra Lives: ${this.#pacman.repeat(this.#lives - 1)}`);
-    }
-
-    // HUGE thank you to Sebastian Lague for teaching me how to use A* Pathfinding
-    // in his amazing tutorial series on A* Pathfinding. Could not have done it without him. 
-    // (https://www.youtube.com/watch?v=-L-WgKMFuhE&list=PLFt_AvWsXl0cq5Umv3pMC9SPnKjfp9eGW&index=1)
-    // The below code has been adapted from ~episode 2-3
-
-    private findPath(startPos: [number, number], targetPos: [number, number]) {
-        const startNode = this.nodeFromBoard(...startPos);
-        const targetNode = this.nodeFromBoard(...targetPos);
-
-        const openSet: Node[] = [];
-        const closedSet: Node[] = [];
-
-        openSet.push(startNode);
-
-        while (openSet.length > 0) {
-
-            let currentNode = openSet[0];
-            
-            for (let i = 1; i < openSet.length; i++) {
-                if (openSet[i].fCost < currentNode.fCost || (openSet[i].fCost === currentNode.fCost && openSet[i].hCost < currentNode.hCost)) {
-                    currentNode = openSet[i];
-                }
-            }
-
-            const removed = openSet.splice(openSet.findIndex(ob => ob.x === currentNode.x && ob.y === currentNode.y), 1);
-            currentNode = removed[0];
-            closedSet.push(removed[0]);
-
-            if (currentNode.x === targetNode.x && currentNode.y === targetNode.y) {
-                const path = this.retracePath(startNode, currentNode);
-                return path;
-            }
-
-            for (const neighbor of this.getNeighbors(currentNode)) {
-                if (!neighbor.walkable || closedSet.find(n => n.x === neighbor.x && n.y === neighbor.y)) continue;
-                
-                const costToNeighbor = currentNode.gCost + this.getDistance(currentNode, neighbor);
-
-                if (costToNeighbor < neighbor.gCost || !openSet.find(ob => ob.x === neighbor.x && ob.y === neighbor.y)) {
-                    
-                    neighbor.gCost = costToNeighbor;
-                    neighbor.hCost = this.getDistance(neighbor, targetNode);
-                    neighbor.fCost = costToNeighbor + this.getDistance(neighbor, targetNode);
-                    neighbor.parent = currentNode;
-
-                    if (!openSet.find(ob => ob.x === neighbor.x && ob.y === neighbor.y)) {
-                        openSet.push(neighbor);
-                    }
-
-                }
-            }
-        }
-    }
-
-    private retracePath(startNode: Node, endNode: Node) {
-        const path: Node[] = [];
-        let currentNode = endNode;
-        while (currentNode.x !== startNode.x || currentNode.y !== startNode.y) {
-            path.push(currentNode);
-            currentNode = <Node>currentNode.parent;
-        }
-        path.reverse();
-        return path;
-    }
-
-    private getDistance(nodeA: Node, nodeB: Node): number {
-        const distX = Math.abs(nodeA.x - nodeB.x);
-        const distY = Math.abs(nodeA.y - nodeB.y);
-       return (10 * distY) + (10 * (distX));
-    }
-
-    private getNeighbors(startNode: Node): Node[] {
-        const neighbors: Node[] = [];
-        const y = startNode.y;
-        const x = startNode.x;
-
-        if (this.#level[y - 1] && this.#level[y - 1][x]) neighbors.push(this.nodeFromBoard(x, y - 1));
-        if (this.#level[y + 1] && this.#level[y + 1][x]) neighbors.push(this.nodeFromBoard(x, y + 1));
-        if (this.#level[y] && this.#level[y][x - 1]) neighbors.push(this.nodeFromBoard(x - 1, y));
-        if (this.#level[y] && this.#level[y][x + 1]) neighbors.push(this.nodeFromBoard(x + 1, y));
-
-        return neighbors;
-    }
-
-    private nodeFromBoard(x: number, y: number): Node {
-
-        let percentX: number = (x / (this.#level[0].length - 1));
-        let percentY: number = (y / (this.#level.length - 1));
-
-        percentX = percentX.clamp(0, 1);
-        percentY = percentY.clamp(0, 1);
-
-        const gridSizeX = Math.round(this.#level[0].length / 1);
-        const gridSizeY = Math.round(this.#level.length / 1);
-
-        const xNum: number = Math.round((gridSizeX - 1) * percentX);
-        const yNum: number = Math.round((gridSizeY - 1) * percentY);
-
-        return {
-            x: xNum,
-            y: yNum,
-            gCost: 0,
-            fCost: 0,
-            hCost: 0,
-            parent: null,
-            space: this.#level[yNum][xNum],
-            walkable: this.#level[yNum][xNum] !== this.#wall && this.#level[yNum][xNum] !== this.#door,
-        };
-
     }
 }
